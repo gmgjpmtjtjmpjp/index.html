@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Aim3D Trainer</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#fff;font-family:sans-serif}
+#hud{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.5);padding:10px;border-radius:8px}
+</style>
+</head>
+<body>
+<div id="hud">WASD移動 / マウス視点 / 左クリック射撃</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/PointerLockControls.js"></script>
+<script>
+let scene=new THREE.Scene();
+scene.background=new THREE.Color(0x202020);
+let camera=new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.1,1000);
+let renderer=new THREE.WebGLRenderer();
+renderer.setSize(window.innerWidth,window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+let controls=new THREE.PointerLockControls(camera,document.body);
+document.body.addEventListener('click',()=>{controls.lock();});
+scene.add(controls.getObject());
+
+// 床
+let floorGeo=new THREE.PlaneGeometry(200,200);
+let floorMat=new THREE.MeshBasicMaterial({color:0x404040});
+let floor=new THREE.Mesh(floorGeo,floorMat);
+floor.rotation.x=-Math.PI/2;
+scene.add(floor);
+
+// 円盤ターゲット生成
+function createTarget(x,y,z){
+    let group=new THREE.Group();
+    let outer=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,0.05,32),new THREE.MeshBasicMaterial({color:0xff0000}));
+    let inner=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,0.051,32),new THREE.MeshBasicMaterial({color:0xffffff}));
+    group.add(outer);
+    group.add(inner);
+    group.position.set(x,y,z);
+    scene.add(group);
+    return group;
+}
+
+let targets=[];
+for(let i=0;i<5;i++){
+    targets.push(createTarget(Math.random()*20-10,1.5,Math.random()*-20));
+}
+
+// 照準線
+let crosshair=document.createElement('div');
+crosshair.style.position='absolute';
+crosshair.style.left='50%';
+crosshair.style.top='50%';
+crosshair.style.transform='translate(-50%,-50%)';
+crosshair.style.width='10px';
+crosshair.style.height='10px';
+crosshair.style.border='2px solid #0ff';
+document.body.appendChild(crosshair);
+
+// 発砲処理
+document.addEventListener('mousedown',()=>{
+    let raycaster=new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+    let intersects=raycaster.intersectObjects(targets,true);
+    if(intersects.length>0){
+        let obj=intersects[0].object.parent||intersects[0].object;
+        scene.remove(obj);
+        targets=targets.filter(t=>t!==obj);
+        console.log("HIT!");
+    } else {
+        console.log("SHOT!");
+    }
+});
