@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>2D Aim Trainer — エイム練習 (PC / スマホ対応)</title>
+<style>
+  :root{
+    --bg:#0f1724; --panel:#0b1220; --accent:#06b6d4; --muted:#94a3b8;
+    --ok:#10b981; --danger:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Meiryo,Arial;background:linear-gradient(180deg,var(--bg),#071021);color:#e6eef6}
+  .wrap{max-width:1100px;margin:12px auto;padding:12px}
+  header{display:flex;align-items:center;gap:12px}
+  h1{font-size:18px;margin:0}
+  .main{display:grid;grid-template-columns:1fr 320px;gap:12px;margin-top:12px}
+  canvas{width:100%;height:calc(100vh - 180px);background:#071021;border-radius:10px;display:block}
+  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px}
+  label{display:block;font-size:13px;color:var(--muted);margin:8px 0}
+  input[type=number], select{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  button{background:var(--accent);border:none;color:#021322;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted);padding:8px}
+  .stat{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.02)}
+  .big{font-size:20px;font-weight:700}
+  .small{font-size:13px;color:var(--muted)}
+  .history{max-height:220px;overflow:auto;margin-top:8px}
+  .row{display:flex;justify-content:space-between;gap:8px}
+  @media(max-width:950px){
+    .main{grid-template-columns:1fr}
+    canvas{height:62vh}
+  }
+  /* mobile-friendly large tappable controls */
+  .mobile-row{display:flex;gap:8px;flex-wrap:wrap}
+  .pill{padding:8px 10px;border-radius:999px;background:rgba(255,255,255,0.02);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>2D Aim Trainer</h1>
+    <div style="margin-left:auto" class="small">タップ / クリックでターゲットを撃つ</div>
+  </header>
+
+  <div class="main">
+    <div>
+      <canvas id="arena"></canvas>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="startBtn">開始</button>
+        <button id="stopBtn" class="ghost">停止</button>
+        <button id="fullscreenBtn" class="ghost">全画面</button>
+        <button id="resetBest" class="ghost">ベストクリア</button>
+      </div>
+      <div class="small" style="margin-top:8px">操作：PC＝クリック、スマホ＝タップ。外側タップはミス。</div>
+    </div>
+
+    <div class="panel">
+      <div class="stat"><div class="small">残り時間</div><div id="time" class="big">00:00</div></div>
+      <div class="stat"><div class="small">ヒット</div><div id="hits" class="big">0</div></div>
+      <div class="stat"><div class="small">ミス</div><div id="misses" class="big">0</div></div>
+      <div class="stat"><div class="small">命中率</div><div id="acc" class="big">0%</div></div>
+
+      <label>モード
+        <select id="mode">
+          <option value="timed">時間制</option>
+          <option value="count">ノックアウト（ヒット数）</option>
+        </select>
+      </label>
+
+      <label>時間 (秒)
+        <input id="duration" type="number" value="30" min="5" />
+      </label>
+
+      <label>目標ヒット数（ノックアウト時）
+        <input id="goalHits" type="number" value="30" min="1" />
+      </label>
+
+      <label>ターゲットサイズ (px)
+        <input id="targetSize" type="number" value="48" min="16" />
+      </label>
+
+      <label>出現間隔 (ms)
+        <input id="spawnInterval" type="number" value="700" min="150" />
+      </label>
+
+      <label>移動ターゲット
+        <select id="moveMode">
+          <option value="none">なし（静止）</option>
+          <option value="random">ランダム移動</option>
+          <option value="sine">横に往復（ゆっくり）</option>
+        </select>
+      </label>
+
+      <div style="margin-top:10px" class="mobile-row">
+        <button id="saveBtn" class="ghost">設定保存</button>
+        <button id="exportBtn" class="ghost">履歴CSV</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="small">ベスト命中率: <span id="best">—</span></div>
+        <div class="history" id="history"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // DOM
+  const canvas = document.getElementById('arena');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const durationInput = document.getElementById('duration');
+  const spawnIntervalInput = document.getElementById('spawnInterval');
+  const targetSizeInput = document.getElementById('targetSize');
+  const modeSelect = document.getElementById('mode');
+  const goalHitsInput = document.getElementById('goalHits');
+  const hitsEl = document.getElementById('hits');
+  const missesEl = document.getElementById('misses');
+  const timeEl = document.getElementById('time');
+  const accEl = document.getElementById('acc');
+  const bestEl = document.getElementById('best');
+  const historyEl = document.getElementById('history');
+  const moveModeSel = document.getElementById('moveMode');
+  const saveBtn = document.getElementById('saveBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const resetBestBtn = document.getElementById('resetBest');
+
+  // State
+  let width = 800, height = 600;
+  let running = false;
+  let hits = 0, misses = 0, shots = 0;
+  let remaining = 0, timerId = null, spawnTimer = null;
+  let targets = []; // {x,y,r,dx,dy,created,moveMode}
+  let historyKey = 'aim2d_history_v1';
+  let settingsKey = 'aim2d_settings_v1';
+
+  // responsive canvas
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(320, Math.floor(rect.width * devicePixelRatio));
+    canvas.height = Math.max(200, Math.floor((window.innerHeight - rect.top - 20) * devicePixelRatio));
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+    draw();
+  }
+  window.addEventListener('resize', resize);
+
+  // draw scene
+  function draw(){
+    ctx.fillStyle = '#071021';
+    ctx.fillRect(0,0,canvas.width/devicePixelRatio, canvas.height/devicePixelRatio);
+
+    // draw targets
+    targets.forEach(t=>{
+      // outer ring
+      ctx.beginPath();
+      ctx.fillStyle = '#ff5555';
+      ctx.arc(t.x, t.y, t.r, 0, Math.PI*2);
+      ctx.fill();
+      // inner circle
+      ctx.beginPath();
+      ctx.fillStyle = '#fff';
+      ctx.arc(t.x, t.y, t.r*0.5, 0, Math.PI*2);
+      ctx.fill();
+      // border
+      ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+
+    // crosshair (center)
+    const cx = canvas.width/devicePixelRatio/2;
+    const cy = canvas.height/devicePixelRatio/2;
+    ctx.strokeStyle = '#06b6d4';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx-8, cy);
+    ctx.lineTo(cx+8, cy);
+    ctx.moveTo(cx, cy-8);
+    ctx.lineTo(cx, cy+8);
+    ctx.stroke();
+  }
+
+  // spawn logic
+  function spawnOne(){
+    const r = Number(targetSizeInput.value) || 48;
+    const pad = r + 8;
+    const w = canvas.width/devicePixelRatio, h = canvas.height/devicePixelRatio;
+    const x = Math.random() * (w - 2*pad) + pad;
+    const y = Math.random() * (h - 2*pad) + pad;
+    const move = moveModeSel.value;
+    const t = { x, y, r, created: Date.now(), moveMode: move, dx:0, dy:0, phase: Math.random()*Math.PI*2 };
+    if(move === 'random'){
+      const speed = (Number(document.getElementById('targetSpeed')?.value) || 40) / 60;
+      t.dx = (Math.random()*2-1)*speed; t.dy = (Math.random()*2-1)*speed;
+    } else if(move === 'sine'){
+      t.ox = x; t.oz = y; t.amp = Math.max(20, r*1.5); t.speed = 0.003 + Math.random()*0.004;
+    }
+    targets.push(t);
+    return t;
+  }
+
+  function startSpawning(){
+    const interval = Math.max(80, Number(spawnIntervalInput.value) || 700);
+    spawnTimer = setInterval(()=>{ spawnOne(); }, interval);
+  }
+  function stopSpawning(){ clearInterval(spawnTimer); spawnTimer = null; }
+
+  // click/tap handling
+  function getPointerPos(e){
+    const rect = canvas.getBoundingClientRect();
+    if(e.touches && e.touches[0]){
+      return { x: (e.touches[0].clientX - rect.left), y: (e.touches[0].clientY - rect.top) };
+    } else {
+      return { x: (e.clientX - rect.left), y: (e.clientY - rect.top) };
+    }
+  }
+
+  function onShot(e){
+    if(!running) return;
+    const p = getPointerPos(e);
+    let hitAny = false;
+    // check top-most target first
+    for(let i = targets.length-1; i >=0; i--){
+      const t = targets[i];
+      const dx = p.x - t.x, dy = p.y - t.y;
+      if(dx*dx + dy*dy <= t.r*t.r){
+        // hit
+        targets.splice(i,1);
+        hits++;
+        hitAny = true;
+        break;
+      }
+    }
+    shots++;
+    if(!hitAny) misses++;
+    updateUI();
+    draw();
+    checkEndConditions();
+    e.preventDefault();
+  }
+
+  // update moving targets
+  function updateTargets(dt){
+    const w = canvas.width/devicePixelRatio, h = canvas.height/devicePixelRatio;
+    targets.forEach(t=>{
+      if(t.moveMode === 'random'){
+        t.x += t.dx * dt * 60;
+        t.y += t.dy * dt * 60;
+        // bounce
+        if(t.x < t.r || t.x > w - t.r) t.dx *= -1;
+        if(t.y < t.r || t.y > h - t.r) t.dy *= -1;
+      } else if(t.moveMode === 'sine'){
+        t.phase += t.speed * dt * 1000;
+        t.x = t.ox + Math.sin(t.phase) * t.amp;
+      }
+    });
+  }
+
+  // UI updates
+  function updateUI(){
+    hitsEl.textContent = hits;
+    missesEl.textContent = misses;
+    const acc = shots === 0 ? 0 : (hits / shots) * 100;
+    accEl.textContent = acc.toFixed(1) + '%';
+  }
+
+  // timer & session
+  let lastFrame = performance.now();
+  function frame(now){
+    const dt = (now - lastFrame) / 1000;
+    lastFrame = now;
+    if(running){
+      updateTargets(dt);
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function formatTime(s){
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(Math.floor(s%60)).padStart(2,'0');
+    return mm + ':' + ss;
+  }
+
+  function startSession(){
+    if(running) return;
+    loadSettingsToUI(); // ensure UI saved
+    running = true;
+    hits = 0; misses = 0; shots = 0;
+    targets = [];
+    const mode = modeSelect.value;
+    if(mode === 'timed'){
+      remaining = Number(durationInput.value) || 30;
+      timeEl.textContent = formatTime(remaining);
+      timerId = setInterval(()=>{
+        remaining--;
+        timeEl.textContent = formatTime(remaining);
+        if(remaining <= 0) stopSession();
+      }, 1000);
+    } else {
+      timeEl.textContent = '—';
+    }
+    // initial spawn burst
+    for(let i=0;i<Math.max(1, Number(document.getElementById('numInit')?.value) || 3); i++) spawnOne();
+    startSpawning();
+    updateUI();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+  }
+
+  function stopSession(){
+    if(!running) return;
+    running = false;
+    clearInterval(timerId); timerId = null; stopSpawning();
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    // save history
+    const acc = shots === 0 ? 0 : (hits / shots) * 100;
+    pushHistory({ date: new Date().toISOString(), mode: modeSelect.value, hits, shots, acc: acc });
+    renderHistory();
+    storeBest(acc);
+  }
+
+  // end conditions: for count mode
+  function checkEndConditions(){
+    if(modeSelect.value === 'count'){
+      const goal = Number(goalHitsInput.value) || 30;
+      if(hits >= goal) stopSession();
+    }
+  }
+
+  // history & storage
+  function pushHistory(entry){
+    const arr = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    arr.unshift(entry);
+    if(arr.length > 200) arr.pop();
+    localStorage.setItem(historyKey, JSON.stringify(arr));
+  }
+  function renderHistory(){
+    const arr = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    historyEl.innerHTML = arr.slice(0,30).map(it=>{
+      return `<div style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.03)"><div class="small">${new Date(it.date).toLocaleString()}</div><div class="small">mode:${it.mode} hits:${it.hits} shots:${it.shots} acc:${it.acc.toFixed(1)}%</div></div>`;
+    }).join('') || '<div class="small">履歴なし</div>';
+  }
+  function storeBest(acc){
+    const b = Number(localStorage.getItem('aim2d_best') || '0');
+    if(acc > b){
+      localStorage.setItem('aim2d_best', String(acc));
+      bestEl.textContent = acc.toFixed(1) + '%';
+    }
+  }
+  function loadBest(){ const b = Number(localStorage.getItem('aim2d_best') || '0'); bestEl.textContent = b ? b.toFixed(1) + '%' : '—'; }
+
+  // settings save/load
+  function saveSettings(){
+    const s = {
+      duration: Number(durationInput.value),
+      spawnInterval: Number(spawnIntervalInput.value),
+      targetSize: Number(targetSizeInput.value),
+      mode: modeSelect.value,
+      goalHits: Number(goalHitsInput.value),
+      moveMode: moveModeSel.value
+    };
+    localStorage.setItem(settingsKey, JSON.stringify(s));
+    alert('設定を保存しました');
+  }
+  function loadSettings(){
+    try{
+      const s = JSON.parse(localStorage.getItem(settingsKey) || '{}');
+      if(s.duration) durationInput.value = s.duration;
+      if(s.spawnInterval) spawnIntervalInput.value = s.spawnInterval;
+      if(s.targetSize) targetSizeInput.value = s.targetSize;
+      if(s.mode) modeSelect.value = s.mode;
+      if(s.goalHits) goalHitsInput.value = s.goalHits;
+      if(s.moveMode) moveModeSel.value = s.moveMode;
+    }catch(e){}
+  }
+  function loadSettingsToUI(){ saveSettings(); } // keep simple: save when starting
+
+  // export CSV
+  function exportCSV(){
+    const arr = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    if(arr.length===0){ alert('履歴がありません'); return; }
+    let csv = 'date,mode,hits,shots,accuracy\n' + arr.map(r=>[r.date,r.mode,r.hits,r.shots,(r.acc||0).toFixed(2)].join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'aim2d_history.csv';
+    a.click();
+  }
+
+  // reset best
+  resetBestBtn.addEventListener('click', ()=>{ if(confirm('ベスト記録を削除しますか？')){ localStorage.removeItem('aim2d_best'); loadBest(); } });
+
+  // events
+  canvas.addEventListener('click', onShot);
+  canvas.addEventListener('touchstart', onShot, {passive:false});
+  startBtn.addEventListener('click', startSession);
+  stopBtn.addEventListener('click', stopSession);
+  saveBtn.addEventListener('click', saveSettings);
+  exportBtn.addEventListener('click', exportCSV);
+  fullscreenBtn.addEventListener('click', ()=>{
+    if(document.fullscreenElement) document.exitFullscreen();
+    else canvas.requestFullscreen().catch(()=>{});
+  });
+
+  // init
+  function init(){
+    // set canvas size to parent width
+    function adjustSize(){ canvas.style.width = '100%'; canvas.style.height = (window.innerHeight - canvas.getBoundingClientRect().top - 20) + 'px'; resize(); }
+    window.addEventListener('load', adjustSize);
+    window.addEventListener('orientationchange', adjustSize);
+    // load settings & best & history
+    loadSettings();
+    loadBest();
+    renderHistory();
+    draw();
+    lastFrame = performance.now();
+  }
+
+  init();
+
+})();
+</script>
+</body>
+</html>
